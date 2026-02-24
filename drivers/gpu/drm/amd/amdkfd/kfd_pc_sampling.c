@@ -329,7 +329,7 @@ static int kfd_pc_sample_thread_start(struct kfd_node *node)
 }
 
 static int kfd_pc_sample_query_cap(struct kfd_process_device *pdd,
-				   struct kfd_ioctl_pc_sample_args __user *user_args)
+				   struct kfd_ioctl_pc_sample_args *user_args)
 {
 	uint64_t sample_offset;
 	int num_method = 0;
@@ -493,7 +493,7 @@ static int kfd_pc_sample_stop(struct kfd_process_device *pdd,
 }
 
 static int kfd_pc_sample_create(struct kfd_process_device *pdd,
-				struct kfd_ioctl_pc_sample_args __user *user_args)
+				struct kfd_ioctl_pc_sample_args *user_args)
 {
 	struct kfd_pc_sample_info *supported_format = NULL;
 	struct kfd_pc_sample_info user_info;
@@ -606,7 +606,7 @@ void kfd_pc_sample_release(struct kfd_process_device *pdd)
 }
 
 int kfd_pc_sample(struct kfd_process_device *pdd,
-		  struct kfd_ioctl_pc_sample_args __user *args)
+		  struct kfd_ioctl_pc_sample_args *args)
 {
 	struct pc_sampling_entry *pcs_entry;
 
