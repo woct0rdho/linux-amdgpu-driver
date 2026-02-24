@@ -287,7 +287,14 @@ skip_delivery_init:
 
 	node->pcs_data.hosttrap_entry.target_simd = 0;
 	node->pcs_data.hosttrap_entry.target_wave_slot = 0;
-	WRITE_ONCE(node->pcs_data.hosttrap_entry.pc_sample_thread, NULL);
+
+	/* Wait for kthread_stop() from the stop path rather than exiting
+	 * immediately.  Exiting would let the task_struct be reaped, causing
+	 * a use-after-free when kfd_pc_sample_stop() later calls
+	 * kthread_stop() on the stale pointer.
+	 */
+	while (!kthread_should_stop())
+		schedule_timeout_interruptible(msecs_to_jiffies(100));
 
 	if (lead_thread)
 		put_task_struct(lead_thread);
@@ -454,8 +461,10 @@ static int kfd_pc_sample_stop(struct kfd_process_device *pdd,
 	if (pc_sampling_stop) {
 		struct task_struct *t =
 			READ_ONCE(pdd->dev->pcs_data.hosttrap_entry.pc_sample_thread);
-		if (t)
+		if (t) {
 			kthread_stop(t);
+			WRITE_ONCE(pdd->dev->pcs_data.hosttrap_entry.pc_sample_thread, NULL);
+		}
 	}
 
 	return 0;
