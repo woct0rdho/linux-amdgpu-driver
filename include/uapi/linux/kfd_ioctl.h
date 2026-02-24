@@ -1711,9 +1711,12 @@ struct kfd_ioctl_pc_sample_args {
 };
 
 #define AMDKFD_IOC_PC_SAMPLE		\
-		AMDKFD_IOWR(0x27, struct kfd_ioctl_pc_sample_args)
+		AMDKFD_IOWR(0x85, struct kfd_ioctl_pc_sample_args)
 
 #define AMDKFD_COMMAND_START		0x01
-#define AMDKFD_COMMAND_END		0x28
+#define AMDKFD_COMMAND_END		0x27
+
+#define AMDKFD_COMMAND_START_2		0x80
+#define AMDKFD_COMMAND_END_2		0x88
 
 #endif

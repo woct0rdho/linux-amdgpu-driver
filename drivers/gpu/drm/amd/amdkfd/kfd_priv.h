@@ -310,9 +310,15 @@ struct kfd_ioctl_pc_sample_args {
 };
 
 #define AMDKFD_IOC_PC_SAMPLE \
-	AMDKFD_IOWR(0x27, struct kfd_ioctl_pc_sample_args)
+	AMDKFD_IOWR(0x85, struct kfd_ioctl_pc_sample_args)
 
 #endif /* KFD_IOCTL_PCS_FLAG_POWER_OF_2 */
+
+/* Second ioctl range for PC sampling (matches ROCm driver convention) */
+#ifndef AMDKFD_COMMAND_START_2
+#define AMDKFD_COMMAND_START_2	0x80
+#define AMDKFD_COMMAND_END_2	0x88
+#endif
 
 struct kfd_dev_pc_sampling_data {
 	uint32_t use_count;

@@ -3292,7 +3292,8 @@ static long kfd_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 		goto err_i1;
 	}
 
-	if ((nr >= AMDKFD_COMMAND_START) && (nr < AMDKFD_COMMAND_END)) {
+	if (((nr >= AMDKFD_COMMAND_START) && (nr < AMDKFD_COMMAND_END)) ||
+	    ((nr >= AMDKFD_COMMAND_START_2) && (nr < AMDKFD_COMMAND_END_2))) {
 		u32 amdkfd_size;
 
 		ioctl = &amdkfd_ioctls[nr];
