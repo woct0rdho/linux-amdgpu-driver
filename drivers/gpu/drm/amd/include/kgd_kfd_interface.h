@@ -46,6 +46,19 @@ enum kfd_preempt_type {
 	KFD_PREEMPT_TYPE_WAVEFRONT_SAVE
 };
 
+/* PC sample record — must match perf_sample_hosttrap_v1_t layout (64 bytes) */
+struct kfd_pcs_sample {
+	uint64_t pc;
+	uint64_t exec_mask;
+	uint32_t workgroup_id[3];
+	uint32_t chiplet_info;
+	uint32_t hw_id;
+	uint32_t reserved0;
+	uint64_t reserved1;
+	uint64_t timestamp;
+	uint64_t correlation_id;
+};
+
 struct kfd_vm_fault_info {
 	uint64_t	page_addr;
 	uint32_t	vmid;
@@ -333,6 +346,9 @@ struct kfd2kgd_calls {
 			      uint32_t inst, unsigned int utimeout);
 	uint32_t (*hqd_sdma_get_doorbell)(struct amdgpu_device *adev,
 					  int engine, int queue);
+	int (*read_wave_pcs)(struct amdgpu_device *adev, uint32_t vmid,
+			     struct kfd_pcs_sample *sample_buf,
+			     int max_samples, uint32_t inst);
 };
 
 #endif	/* KGD_KFD_INTERFACE_H_INCLUDED */

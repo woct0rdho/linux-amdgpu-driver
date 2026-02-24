@@ -557,6 +557,15 @@ static int allocate_vmid(struct device_queue_manager *dqm,
 	qpd->vmid = allocated_vmid;
 	q->properties.vmid = allocated_vmid;
 
+	/* Host-trap PC sampling may start before queue VMID is assigned.
+	 * Refresh target_vmid only for the owning PASID if target_vmid is not set.
+	 */
+	if (READ_ONCE(dqm->dev->pcs_data.hosttrap_entry.base.active_count) &&
+	    READ_ONCE(dqm->dev->pcs_data.hosttrap_entry.owner_pasid) == pdd->pasid &&
+	    !READ_ONCE(dqm->dev->pcs_data.hosttrap_entry.target_vmid)) {
+		WRITE_ONCE(dqm->dev->pcs_data.hosttrap_entry.target_vmid, allocated_vmid);
+	}
+
 	program_sh_mem_settings(dqm, qpd);
 
 	if (KFD_IS_SOC15(dqm->dev) && dqm->dev->kfd->cwsr_enabled)
@@ -1469,7 +1478,7 @@ set_pasid_vmid_mapping(struct device_queue_manager *dqm, u32 pasid,
 			unsigned int vmid)
 {
 	uint32_t xcc_mask = dqm->dev->xcc_mask;
-	int xcc_id, ret;
+	int xcc_id, ret = 0;
 
 	for_each_inst(xcc_id, xcc_mask) {
 		ret = dqm->dev->kfd2kgd->set_pasid_vmid_mapping(
@@ -3760,3 +3769,22 @@ int dqm_debugfs_hang_hws(struct device_queue_manager *dqm)
 }
 
 #endif
+
+void remap_queue(struct device_queue_manager *dqm,
+			enum kfd_unmap_queues_filter filter,
+			uint32_t filter_param)
+{
+	int ret;
+
+	dqm_lock(dqm);
+	if (!dqm->dev->kfd->shared_resources.enable_mes) {
+		execute_queues_cpsch(dqm, filter, filter_param, USE_DEFAULT_GRACE_PERIOD);
+	} else {
+		ret = remove_all_kfd_queues_mes(dqm);
+		if (ret)
+			goto out;
+		ret = add_all_kfd_queues_mes(dqm);
+	}
+out:
+	dqm_unlock(dqm);
+}

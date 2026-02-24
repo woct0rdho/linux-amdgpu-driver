@@ -102,6 +102,18 @@ static int set_pasid_vmid_mapping_v11(struct amdgpu_device *adev, unsigned int p
 	return 0;
 }
 
+static bool get_atc_vmid_pasid_mapping_info_v11(struct amdgpu_device *adev,
+					uint8_t vmid, uint16_t *p_pasid)
+{
+	if (!p_pasid)
+		return false;
+
+	*p_pasid = RREG32(SOC15_REG_OFFSET(OSSSYS, 0, regIH_VMID_0_LUT) + vmid) &
+		   0xffff;
+
+	return !!(*p_pasid);
+}
+
 static int init_interrupts_v11(struct amdgpu_device *adev, uint32_t pipe_id,
 				uint32_t inst)
 {
@@ -806,6 +818,123 @@ static uint32_t kgd_gfx_v11_hqd_sdma_get_doorbell(struct amdgpu_device *adev,
 	return 0;
 }
 
+static uint32_t kgd_gfx_v11_wave_read_ind(struct amdgpu_device *adev,
+		uint32_t inst, uint32_t wave, uint32_t address)
+{
+	WREG32_SOC15(GC, GET_INST(GC, inst), regSQ_IND_INDEX,
+		(wave << SQ_IND_INDEX__WAVE_ID__SHIFT) |
+		(address << SQ_IND_INDEX__INDEX__SHIFT));
+	return RREG32_SOC15(GC, GET_INST(GC, inst), regSQ_IND_DATA);
+}
+
+static void program_trap_handler_settings_v11(struct amdgpu_device *adev,
+		uint32_t vmid, uint64_t tba_addr, uint64_t tma_addr,
+		uint32_t inst)
+{
+	lock_srbm(adev, 0, 0, 0, vmid);
+
+	WREG32_SOC15(GC, GET_INST(GC, inst), regSQ_SHADER_TBA_LO,
+		     lower_32_bits(tba_addr >> 8));
+	WREG32_SOC15(GC, GET_INST(GC, inst), regSQ_SHADER_TBA_HI,
+		     upper_32_bits(tba_addr >> 8) |
+		     (1 << SQ_SHADER_TBA_HI__TRAP_EN__SHIFT));
+
+	WREG32_SOC15(GC, GET_INST(GC, inst), regSQ_SHADER_TMA_LO,
+		     lower_32_bits(tma_addr >> 8));
+	WREG32_SOC15(GC, GET_INST(GC, inst), regSQ_SHADER_TMA_HI,
+		     upper_32_bits(tma_addr >> 8));
+
+	WREG32_SOC15(GC, GET_INST(GC, inst), regSPI_GDBG_PER_VMID_CNTL,
+		     REG_SET_FIELD(0, SPI_GDBG_PER_VMID_CNTL, TRAP_EN, 1));
+
+	unlock_srbm(adev);
+}
+
+static int kgd_gfx_v11_read_wave_pcs(struct amdgpu_device *adev,
+				      uint32_t vmid,
+				      struct kfd_pcs_sample *sample_buf,
+				      int max_samples, uint32_t inst)
+{
+	int se, sh, wgp, simd, wave;
+	int num_se = adev->gfx.config.max_shader_engines;
+	int num_sh = adev->gfx.config.max_sh_per_se;
+	int num_wgp = adev->gfx.config.max_cu_per_sh / 2;
+	int max_waves = adev->gfx.cu_info.max_waves_per_simd;
+	int samples = 0;
+
+	if (amdgpu_in_reset(adev))
+		return 0;
+
+	if (!sample_buf || max_samples <= 0)
+		return 0;
+
+	if (!max_waves || max_waves > 16)
+		max_waves = 16;
+
+	mutex_lock(&adev->grbm_idx_mutex);
+
+	for (se = 0; se < num_se; se++) {
+	  for (sh = 0; sh < num_sh; sh++) {
+	    for (wgp = 0; wgp < num_wgp; wgp++) {
+	      for (simd = 0; simd < 4; simd++) {
+		amdgpu_gfx_select_se_sh(adev, se, sh,
+					(wgp << 2) | simd, inst);
+
+		for (wave = 0; wave < max_waves; wave++) {
+			uint32_t status, hw_id2, wave_vmid;
+			u32 pc_lo, pc_hi;
+			u64 pc;
+			struct kfd_pcs_sample *s;
+
+			if (samples >= max_samples)
+				goto done;
+
+			status = kgd_gfx_v11_wave_read_ind(
+				adev, inst, wave, ixSQ_WAVE_STATUS);
+
+			if (status & 0xC0000000)
+				continue;
+			if (!(status & SQ_WAVE_STATUS__VALID_MASK))
+				continue;
+			if (status & SQ_WAVE_STATUS__PRIV_MASK)
+				continue;
+
+			hw_id2 = kgd_gfx_v11_wave_read_ind(
+				adev, inst, wave, ixSQ_WAVE_HW_ID2);
+			if (hw_id2 == 0xbebebeef)
+				continue;
+			wave_vmid = FIELD_GET(SQ_WAVE_HW_ID2__VM_ID_MASK, hw_id2);
+			if (wave_vmid != vmid)
+				continue;
+
+			pc_lo = kgd_gfx_v11_wave_read_ind(
+				adev, inst, wave, ixSQ_WAVE_PC_LO);
+			pc_hi = kgd_gfx_v11_wave_read_ind(
+				adev, inst, wave, ixSQ_WAVE_PC_HI);
+			if (pc_lo == 0xbebebeef || pc_hi == 0xbebebeef)
+				continue;
+
+			pc = ((u64)pc_hi << 32) | pc_lo;
+			s = &sample_buf[samples];
+			memset(s, 0, sizeof(*s));
+			s->pc = pc;
+			s->hw_id = hw_id2;
+			s->timestamp = ktime_get_raw_ns();
+			samples++;
+		}
+	      }
+	    }
+	  }
+	}
+
+done:
+	amdgpu_gfx_select_se_sh(adev, 0xFFFFFFFF, 0xFFFFFFFF,
+				0xFFFFFFFF, inst);
+	mutex_unlock(&adev->grbm_idx_mutex);
+
+	return samples;
+}
+
 const struct kfd2kgd_calls gfx_v11_kfd2kgd = {
 	.program_sh_mem_settings = program_sh_mem_settings_v11,
 	.set_pasid_vmid_mapping = set_pasid_vmid_mapping_v11,
@@ -820,7 +949,7 @@ const struct kfd2kgd_calls gfx_v11_kfd2kgd = {
 	.hqd_destroy = hqd_destroy_v11,
 	.hqd_sdma_destroy = hqd_sdma_destroy_v11,
 	.wave_control_execute = wave_control_execute_v11,
-	.get_atc_vmid_pasid_mapping_info = NULL,
+	.get_atc_vmid_pasid_mapping_info = get_atc_vmid_pasid_mapping_info_v11,
 	.set_vm_context_page_table_base = set_vm_context_page_table_base_v11,
 	.enable_debug_trap = kgd_gfx_v11_enable_debug_trap,
 	.disable_debug_trap = kgd_gfx_v11_disable_debug_trap,
@@ -829,7 +958,9 @@ const struct kfd2kgd_calls gfx_v11_kfd2kgd = {
 	.set_wave_launch_mode = kgd_gfx_v11_set_wave_launch_mode,
 	.set_address_watch = kgd_gfx_v11_set_address_watch,
 	.clear_address_watch = kgd_gfx_v11_clear_address_watch,
+	.program_trap_handler_settings = program_trap_handler_settings_v11,
 	.hqd_get_pq_addr = kgd_gfx_v11_hqd_get_pq_addr,
 	.hqd_reset = kgd_gfx_v11_hqd_reset,
-	.hqd_sdma_get_doorbell = kgd_gfx_v11_hqd_sdma_get_doorbell
+	.hqd_sdma_get_doorbell = kgd_gfx_v11_hqd_sdma_get_doorbell,
+	.read_wave_pcs = kgd_gfx_v11_read_wave_pcs
 };
