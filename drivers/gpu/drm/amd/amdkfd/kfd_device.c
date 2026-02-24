@@ -635,6 +635,9 @@ static int kfd_init_node(struct kfd_node *node)
 
 	kfd_smi_init(node);
 
+	mutex_init(&node->pcs_data.mutex);
+	idr_init_base(&node->pcs_data.sampling_idr, 1);
+
 	return 0;
 
 kfd_topology_add_device_error:
@@ -672,6 +675,8 @@ static void kfd_cleanup_nodes(struct kfd_dev *kfd, unsigned int num_nodes)
 		kfd_topology_remove_device(knode);
 		if (knode->gws)
 			amdgpu_amdkfd_free_gws(knode->adev, knode->gws);
+		idr_destroy(&knode->pcs_data.sampling_idr);
+		mutex_destroy(&knode->pcs_data.mutex);
 		kfree(knode);
 		kfd->nodes[i] = NULL;
 	}

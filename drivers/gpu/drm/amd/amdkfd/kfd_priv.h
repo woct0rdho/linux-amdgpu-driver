@@ -265,6 +265,94 @@ struct kfd_vmid_info {
 
 struct kfd_dev;
 
+/* PC sampling types — duplicated from uapi for out-of-tree DKMS builds
+ * where the installed kernel headers lack these definitions.
+ */
+#ifndef KFD_IOCTL_PCS_FLAG_POWER_OF_2
+
+enum kfd_ioctl_pc_sample_op {
+	KFD_IOCTL_PCS_OP_QUERY_CAPABILITIES,
+	KFD_IOCTL_PCS_OP_CREATE,
+	KFD_IOCTL_PCS_OP_DESTROY,
+	KFD_IOCTL_PCS_OP_START,
+	KFD_IOCTL_PCS_OP_STOP,
+};
+
+#define KFD_IOCTL_PCS_FLAG_POWER_OF_2 0x00000001
+
+enum kfd_ioctl_pc_sample_method {
+	KFD_IOCTL_PCS_METHOD_HOSTTRAP = 1,
+	KFD_IOCTL_PCS_METHOD_STOCHASTIC,
+};
+
+enum kfd_ioctl_pc_sample_type {
+	KFD_IOCTL_PCS_TYPE_TIME_US,
+	KFD_IOCTL_PCS_TYPE_CLOCK_CYCLES,
+	KFD_IOCTL_PCS_TYPE_INSTRUCTIONS
+};
+
+struct kfd_pc_sample_info {
+	__u64 interval;
+	__u64 interval_min;
+	__u64 interval_max;
+	__u64 flags;
+	__u32 method;
+	__u32 type;
+};
+
+#define KFD_IOCTL_PCS_QUERY_TYPE_FULL (1 << 0)
+
+struct kfd_ioctl_pc_sample_args {
+	__u64 sample_info_ptr;
+	__u32 num_sample_info;
+	__u32 op;
+	__u32 gpu_id;
+	__u32 trace_id;
+	__u32 flags;
+	__u32 version;
+};
+
+#define AMDKFD_IOC_PC_SAMPLE \
+	AMDKFD_IOWR(0x85, struct kfd_ioctl_pc_sample_args)
+
+#endif /* KFD_IOCTL_PCS_FLAG_POWER_OF_2 */
+
+/* Second ioctl range for PC sampling (matches ROCm driver convention) */
+#ifndef AMDKFD_COMMAND_START_2
+#define AMDKFD_COMMAND_START_2	0x80
+#define AMDKFD_COMMAND_END_2	0x88
+#endif
+
+struct kfd_dev_pc_sampling_data {
+	uint32_t use_count;
+	uint32_t active_count;
+	struct kfd_pc_sample_info pc_sample_info;
+};
+
+/* Bit indices in TMA[2] flags word (CWSR TMA layout) */
+#define KFD_TRAP_TYPE_DEBUG	0
+#define KFD_TRAP_TYPE_HOST	1
+
+struct kfd_dev_pcs_hosttrap {
+	struct kfd_dev_pc_sampling_data base;
+	uint32_t owner_pasid;
+	uint32_t target_simd;
+	uint32_t target_wave_slot;
+	uint32_t target_vmid;
+	struct task_struct *pc_sample_thread;
+};
+
+struct kfd_dev_stochastic {
+	struct kfd_dev_pc_sampling_data base;
+};
+
+struct kfd_dev_pc_sampling {
+	struct mutex mutex;
+	struct idr sampling_idr;
+	struct kfd_dev_pcs_hosttrap hosttrap_entry;
+	struct kfd_dev_stochastic stoch_entry;
+};
+
 struct kfd_node {
 	unsigned int node_id;
 	struct amdgpu_device *adev;     /* Duplicated here along with keeping
@@ -320,6 +408,9 @@ struct kfd_node {
 	/* Track per device allocated watch points */
 	uint32_t alloc_watch_ids;
 	spinlock_t watch_points_lock;
+
+	/* Per-device PC sampling data */
+	struct kfd_dev_pc_sampling pcs_data;
 };
 
 struct kfd_dev {
@@ -751,6 +842,12 @@ enum kfd_pdd_bound {
  */
 #define SDMA_ACTIVITY_DIVISOR  100
 
+struct pc_sampling_entry {
+	bool enabled;
+	enum kfd_ioctl_pc_sample_method method;
+	struct kfd_process_device *pdd;
+};
+
 /* Data that is per-process-per device. */
 struct kfd_process_device {
 	/* The device that owns this data. */
@@ -1026,6 +1123,7 @@ struct kfd_process {
 	/* The primary kfd_process allocating IDs for its secondary kfd_process, 0 for primary kfd_process */
 	struct ida id_table;
 
+	uint32_t pc_sampling_ref;
 };
 
 #define KFD_PROCESS_TABLE_SIZE 8 /* bits: 256 entries */
@@ -1216,6 +1314,9 @@ void kfd_process_set_trap_handler(struct qcm_process_device *qpd,
 				  uint64_t tba_addr,
 				  uint64_t tma_addr);
 void kfd_process_set_trap_debug_flag(struct qcm_process_device *qpd,
+				     bool enabled);
+void kfd_process_set_trap_pc_sampling_flag(struct qcm_process_device *qpd,
+				     enum kfd_ioctl_pc_sample_method method,
 				     bool enabled);
 
 /* CWSR initialization */

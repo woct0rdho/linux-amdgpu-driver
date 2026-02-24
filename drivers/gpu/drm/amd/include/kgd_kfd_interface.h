@@ -333,6 +333,17 @@ struct kfd2kgd_calls {
 			      uint32_t inst, unsigned int utimeout);
 	uint32_t (*hqd_sdma_get_doorbell)(struct amdgpu_device *adev,
 					  int engine, int queue);
+	uint32_t (*trigger_pc_sample_trap)(struct amdgpu_device *adev,
+			uint32_t vmid,
+			uint32_t *target_simd,
+			uint32_t *target_wave_slot,
+			uint32_t inst);
+	uint32_t (*setup_stoch_sampling)(struct amdgpu_device *adev,
+			uint32_t compute_vmid_bitmap,
+			bool enable,
+			uint32_t type,
+			uint64_t intval,
+			uint32_t inst);
 };
 
 #endif	/* KGD_KFD_INTERFACE_H_INCLUDED */
