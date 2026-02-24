@@ -514,6 +514,9 @@ static int kfd_pc_sample_create(struct kfd_process_device *pdd,
 	if (ret)
 		return -EFAULT;
 
+	if (user_info.interval > UINT_MAX)
+		return -EINVAL;
+
 	for (i = 0; i < ARRAY_SIZE(supported_formats); i++) {
 		if (KFD_GC_VERSION(pdd->dev) == supported_formats[i].ip_version &&
 		    user_info.method == supported_formats[i].sample_info->method &&
