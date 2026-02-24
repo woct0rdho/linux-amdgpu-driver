@@ -256,18 +256,23 @@ skip_delivery_init:
 
 				if (n_samples > 0) {
 					struct mm_struct *mm = get_task_mm(lead_thread);
+					int wr_ret;
 
 					if (!mm) {
 						pr_warn("pcs: process exited, stopping\n");
 						break;
 					}
 					kthread_use_mm(mm);
-					pcs_write_to_device_data(
+					wr_ret = pcs_write_to_device_data(
 						device_data_va, buf_size,
 						sample_buf, n_samples,
 						&total_delivered);
 					kthread_unuse_mm(mm);
 					mmput(mm);
+					if (wr_ret == -EFAULT) {
+						pr_warn("pcs: device buffer fault, stopping\n");
+						break;
+					}
 				}
 			}
 
