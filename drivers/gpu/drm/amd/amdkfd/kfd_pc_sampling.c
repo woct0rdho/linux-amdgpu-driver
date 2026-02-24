@@ -135,7 +135,7 @@ static int kfd_pc_sample_thread(void *param)
 	}
 	mutex_unlock(&node->pcs_data.mutex);
 	if (!timeout)
-		return -EINVAL;
+		goto exit_wait;
 
 	adev = node->adev;
 
@@ -190,10 +190,7 @@ static int kfd_pc_sample_thread(void *param)
 skip_delivery_init:
 	if (!have_delivery) {
 		pr_warn("pcs: delivery init failed, thread not starting\n");
-		if (lead_thread)
-			put_task_struct(lead_thread);
-		kvfree(sample_buf);
-		return -EINVAL;
+		goto exit_cleanup;
 	}
 
 	pr_info("pcs: thread started interval_us=%u pasid=%u vmid=%u delivery=%d\n",
@@ -301,6 +298,12 @@ skip_delivery_init:
 	node->pcs_data.hosttrap_entry.target_simd = 0;
 	node->pcs_data.hosttrap_entry.target_wave_slot = 0;
 
+exit_cleanup:
+	if (lead_thread)
+		put_task_struct(lead_thread);
+	kvfree(sample_buf);
+
+exit_wait:
 	/* Wait for kthread_stop() from the stop path rather than exiting
 	 * immediately.  Exiting would let the task_struct be reaped, causing
 	 * a use-after-free when kfd_pc_sample_stop() later calls
@@ -308,10 +311,6 @@ skip_delivery_init:
 	 */
 	while (!kthread_should_stop())
 		schedule_timeout_uninterruptible(msecs_to_jiffies(100));
-
-	if (lead_thread)
-		put_task_struct(lead_thread);
-	kvfree(sample_buf);
 
 	return 0;
 }
