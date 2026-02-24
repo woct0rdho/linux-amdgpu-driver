@@ -1940,7 +1940,13 @@ static void kfd_topology_set_dbg_firmware_support(struct kfd_topology_device *de
 		uint32_t mes_rev = dev->gpu->adev->mes.sched_version &
 						AMDGPU_MES_VERSION_MASK;
 
-		firmware_supported = (mes_api_rev >= 14) && (mes_rev >= 64);
+		/* Mainline MES firmware doesn't encode the API version in
+		 * the upper bits (mes_api_rev == 0), but the firmware is
+		 * functionally capable.  Accept it if mes_rev alone is
+		 * sufficient.
+		 */
+		firmware_supported = (mes_api_rev >= 14 || mes_api_rev == 0)
+					&& (mes_rev >= 64);
 		goto out;
 	}
 
