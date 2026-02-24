@@ -143,42 +143,57 @@ static int kfd_pc_sample_thread(void *param)
 		uint32_t owner_pasid;
 		struct kfd_process *proc;
 		struct mm_struct *mm;
+		u64 tma_addr;
 
 		sample_buf = kvmalloc_array(PCS_MAX_KERNEL_SAMPLES,
 					    sizeof(struct kfd_pcs_sample),
 					    GFP_KERNEL | __GFP_ZERO);
-		if (!sample_buf)
+		if (!sample_buf) {
+			pr_warn("pcs: thread init failed: sample_buf alloc\n");
 			goto skip_delivery_init;
+		}
 
 		owner_pasid = READ_ONCE(node->pcs_data.hosttrap_entry.owner_pasid);
 		proc = kfd_lookup_process_by_pasid(owner_pasid, NULL);
-		if (!proc)
+		if (!proc) {
+			pr_warn("pcs: thread init failed: no process for pasid=%u\n",
+				owner_pasid);
 			goto skip_delivery_init;
+		}
 
 		lead_thread = proc->lead_thread;
 		get_task_struct(lead_thread);
 		kfd_unref_process(proc);
 
 		mm = get_task_mm(lead_thread);
-		if (!mm)
+		if (!mm) {
+			pr_warn("pcs: thread init failed: get_task_mm returned NULL\n");
 			goto skip_delivery_init;
+		}
 
-		{
-			u64 tma_addr = READ_ONCE(
-				node->pcs_data.hosttrap_entry.trap_tma_addr);
-			if (tma_addr) {
-				kthread_use_mm(mm);
-				if (get_user(device_data_va,
-					     (u64 __user *)tma_addr))
-					device_data_va = 0;
-				if (device_data_va) {
-					if (get_user(buf_size,
-						     (u32 __user *)(device_data_va +
-								   PCS_DD_BUF_SIZE)))
-						buf_size = 0;
-				}
-				kthread_unuse_mm(mm);
+		tma_addr = READ_ONCE(
+			node->pcs_data.hosttrap_entry.trap_tma_addr);
+		if (!tma_addr) {
+			pr_warn("pcs: thread init failed: trap_tma_addr is 0\n");
+		} else {
+			kthread_use_mm(mm);
+			if (get_user(device_data_va,
+				     (u64 __user *)tma_addr))
+				device_data_va = 0;
+			if (device_data_va) {
+				if (get_user(buf_size,
+					     (u32 __user *)(device_data_va +
+							   PCS_DD_BUF_SIZE)))
+					buf_size = 0;
 			}
+			kthread_unuse_mm(mm);
+
+			if (!device_data_va)
+				pr_warn("pcs: thread init failed: device_data_va read from tma=0x%llx returned 0\n",
+					tma_addr);
+			else if (!buf_size)
+				pr_warn("pcs: thread init failed: buf_size read from device_data=0x%llx returned 0\n",
+					device_data_va);
 		}
 
 		mmput(mm);
@@ -188,10 +203,8 @@ static int kfd_pc_sample_thread(void *param)
 	}
 
 skip_delivery_init:
-	if (!have_delivery) {
-		pr_warn("pcs: delivery init failed, thread not starting\n");
+	if (!have_delivery)
 		goto exit_cleanup;
-	}
 
 	pr_info("pcs: thread started interval_us=%u pasid=%u vmid=%u delivery=%d\n",
 		timeout,
@@ -403,6 +416,20 @@ static int kfd_pc_sample_start(struct kfd_process_device *pdd,
 	pdd->dev->pcs_data.hosttrap_entry.target_vmid = pdd->qpd.vmid;
 	pdd->dev->pcs_data.hosttrap_entry.trap_tba_addr = pdd->qpd.tba_addr;
 	pdd->dev->pcs_data.hosttrap_entry.trap_tma_addr = pdd->qpd.tma_addr;
+
+	/* When CWSR is active, qpd->tma_addr is the first-level (CWSR) TMA.
+	 * ROCr's SetTrapHandler wrote the second-level TMA address into
+	 * CWSR_TMA[1] (see kfd_process_set_trap_handler).  The kernel thread
+	 * needs the second-level TMA to find the device_data VA at offset 0.
+	 */
+	if (pdd->qpd.cwsr_kaddr) {
+		uint64_t *cwsr_tma = (uint64_t *)(pdd->qpd.cwsr_kaddr +
+						  KFD_CWSR_TMA_OFFSET);
+		if (cwsr_tma[1])
+			pdd->dev->pcs_data.hosttrap_entry.trap_tma_addr =
+				cwsr_tma[1];
+	}
+
 	pdd->dev->pcs_data.hosttrap_entry.trap_regs_programmed_vmid = 0;
 	if (!pdd->dev->pcs_data.hosttrap_entry.target_vmid) {
 		uint32_t resolved_vmid =
