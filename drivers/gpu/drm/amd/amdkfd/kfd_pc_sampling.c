@@ -188,6 +188,14 @@ static int kfd_pc_sample_thread(void *param)
 	}
 
 skip_delivery_init:
+	if (!have_delivery) {
+		pr_warn("pcs: delivery init failed, thread not starting\n");
+		if (lead_thread)
+			put_task_struct(lead_thread);
+		kvfree(sample_buf);
+		return -EINVAL;
+	}
+
 	pr_info("pcs: thread started interval_us=%u pasid=%u vmid=%u delivery=%d\n",
 		timeout,
 		READ_ONCE(node->pcs_data.hosttrap_entry.owner_pasid),
@@ -294,7 +302,7 @@ skip_delivery_init:
 	 * kthread_stop() on the stale pointer.
 	 */
 	while (!kthread_should_stop())
-		schedule_timeout_interruptible(msecs_to_jiffies(100));
+		schedule_timeout_uninterruptible(msecs_to_jiffies(100));
 
 	if (lead_thread)
 		put_task_struct(lead_thread);
@@ -433,6 +441,20 @@ static int kfd_pc_sample_start(struct kfd_process_device *pdd,
 			ret = kfd_pc_sample_thread_start(pdd->dev);
 			break;
 		}
+	}
+
+	if (ret && pc_sampling_start) {
+		pcs_entry->enabled = false;
+		mutex_lock(&pdd->dev->pcs_data.mutex);
+		pdd->dev->pcs_data.hosttrap_entry.base.active_count--;
+		if (!pdd->dev->pcs_data.hosttrap_entry.base.active_count) {
+			pdd->dev->pcs_data.hosttrap_entry.target_vmid = 0;
+			pdd->dev->pcs_data.hosttrap_entry.owner_pasid = 0;
+			pdd->dev->pcs_data.hosttrap_entry.trap_regs_programmed_vmid = 0;
+			pdd->dev->pcs_data.hosttrap_entry.trap_tba_addr = 0;
+			pdd->dev->pcs_data.hosttrap_entry.trap_tma_addr = 0;
+		}
+		mutex_unlock(&pdd->dev->pcs_data.mutex);
 	}
 	return ret;
 }
