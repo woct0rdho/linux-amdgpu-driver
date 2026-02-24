@@ -80,6 +80,8 @@ struct kfd_procfs_tree {
 
 static struct kfd_procfs_tree procfs;
 
+#define KFD_PROCFS_PID_KOBJ_ADD_RETRY_COUNT 3
+
 /*
  * Structure for SDMA activity tracking
  */
@@ -558,6 +560,14 @@ static void kfd_sysfs_create_file(struct kobject *kobj, struct attribute *attr,
 		pr_warn("Create sysfs %s/%s failed %d", kobj->name, name, ret);
 }
 
+static void kfd_sysfs_remove_file(struct kobject *kobj, struct attribute *attr)
+{
+	if (!kobj || !attr || !attr->name)
+		return;
+
+	sysfs_remove_file(kobj, attr);
+}
+
 static void kfd_procfs_add_sysfs_stats(struct kfd_process *p)
 {
 	int ret;
@@ -858,6 +868,7 @@ int kfd_create_process_sysfs(struct kfd_process *process)
 	if (ret) {
 		pr_warn("Creating procfs pid directory failed");
 		kobject_put(process->kobj);
+		process->kobj = NULL;
 		return ret;
 	}
 
@@ -924,6 +935,7 @@ struct kfd_process *kfd_create_process(struct task_struct *thread)
 {
 	struct kfd_process *process;
 	int ret;
+	int retry;
 
 	if (!(thread->mm && mmget_not_zero(thread->mm)))
 		return ERR_PTR(-EINVAL);
@@ -965,17 +977,39 @@ struct kfd_process *kfd_create_process(struct task_struct *thread)
 		process = create_process(thread, true);
 		if (IS_ERR(process))
 			goto out;
+		init_waitqueue_head(&process->wait_irq_drain);
 
 		if (!procfs.kobj)
 			goto out;
 
-		ret = kfd_create_process_sysfs(process);
+		for (retry = 0; retry < KFD_PROCFS_PID_KOBJ_ADD_RETRY_COUNT;
+		     retry++) {
+			ret = kfd_create_process_sysfs(process);
+			if (ret != -EEXIST)
+				break;
+
+			mutex_unlock(&kfd_processes_mutex);
+			flush_workqueue(kfd_process_wq);
+			mutex_lock(&kfd_processes_mutex);
+
+			if (!procfs.kobj) {
+				ret = -ENOENT;
+				break;
+			}
+
+			/* Verify our process wasn't destroyed while
+			 * we dropped the mutex.
+			 */
+			if (find_process(thread, false) != process) {
+				ret = -ESRCH;
+				break;
+			}
+		}
+
 		if (ret)
 			pr_warn("Failed to create sysfs entry for the kfd_process");
 
 		kfd_debugfs_add_process(process);
-
-		init_waitqueue_head(&process->wait_irq_drain);
 	}
 out:
 	mutex_unlock(&kfd_processes_mutex);
@@ -1158,32 +1192,40 @@ static void kfd_process_remove_sysfs(struct kfd_process *p)
 	if (!p->kobj)
 		return;
 
-	sysfs_remove_file(p->kobj, &p->attr_pasid);
-	kobject_del(p->kobj_queues);
-	kobject_put(p->kobj_queues);
-	p->kobj_queues = NULL;
+	kfd_sysfs_remove_file(p->kobj, &p->attr_pasid);
+	if (p->kobj_queues) {
+		kobject_del(p->kobj_queues);
+		kobject_put(p->kobj_queues);
+		p->kobj_queues = NULL;
+	}
 
 	for (i = 0; i < p->n_pdds; i++) {
 		pdd = p->pdds[i];
+		if (!pdd)
+			continue;
 
-		sysfs_remove_file(p->kobj, &pdd->attr_vram);
-		sysfs_remove_file(p->kobj, &pdd->attr_sdma);
+		kfd_sysfs_remove_file(p->kobj, &pdd->attr_vram);
+		kfd_sysfs_remove_file(p->kobj, &pdd->attr_sdma);
 
-		sysfs_remove_file(pdd->kobj_stats, &pdd->attr_evict);
-		if (pdd->dev->kfd2kgd->get_cu_occupancy)
-			sysfs_remove_file(pdd->kobj_stats,
-					  &pdd->attr_cu_occupancy);
-		kobject_del(pdd->kobj_stats);
-		kobject_put(pdd->kobj_stats);
-		pdd->kobj_stats = NULL;
+		if (pdd->kobj_stats) {
+			kfd_sysfs_remove_file(pdd->kobj_stats, &pdd->attr_evict);
+			if (pdd->dev->kfd2kgd->get_cu_occupancy)
+				kfd_sysfs_remove_file(pdd->kobj_stats,
+						      &pdd->attr_cu_occupancy);
+			kobject_del(pdd->kobj_stats);
+			kobject_put(pdd->kobj_stats);
+			pdd->kobj_stats = NULL;
+		}
 	}
 
 	for_each_set_bit(i, p->svms.bitmap_supported, p->n_pdds) {
 		pdd = p->pdds[i];
+		if (!pdd || !pdd->kobj_counters)
+			continue;
 
-		sysfs_remove_file(pdd->kobj_counters, &pdd->attr_faults);
-		sysfs_remove_file(pdd->kobj_counters, &pdd->attr_page_in);
-		sysfs_remove_file(pdd->kobj_counters, &pdd->attr_page_out);
+		kfd_sysfs_remove_file(pdd->kobj_counters, &pdd->attr_faults);
+		kfd_sysfs_remove_file(pdd->kobj_counters, &pdd->attr_page_in);
+		kfd_sysfs_remove_file(pdd->kobj_counters, &pdd->attr_page_out);
 		kobject_del(pdd->kobj_counters);
 		kobject_put(pdd->kobj_counters);
 		pdd->kobj_counters = NULL;
