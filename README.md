@@ -16,7 +16,7 @@ Bonus: Thread tracing also seems to work. Double buffer in thread tracing is not
 
 1. Clone this repo (use `--filter=blob:none` to save time) and checkout `pc_sampling_gfx1151` branch
 2. `python setup_dkms_linked.py`
-3. `sudo ln -s ~/amdgpu/amdgpu-dkms /usr/src/amdgpu-1.0`
+3. `sudo ln -s /path_to_this_repo/amdgpu-dkms /usr/src/amdgpu-1.0`
 4. `sudo dkms build --force amdgpu/1.0`
 5. `sudo dkms install --force amdgpu/1.0`
 6. Go on to install ROCr and ROCProfiler in my forked [rocm-systems](https://github.com/woct0rdho/rocm-systems)
