@@ -102,6 +102,18 @@ static int set_pasid_vmid_mapping_v11(struct amdgpu_device *adev, unsigned int p
 	return 0;
 }
 
+static bool get_atc_vmid_pasid_mapping_info_v11(struct amdgpu_device *adev,
+					uint8_t vmid, uint16_t *p_pasid)
+{
+	if (!p_pasid)
+		return false;
+
+	*p_pasid = RREG32(SOC15_REG_OFFSET(OSSSYS, 0, regIH_VMID_0_LUT) + vmid) &
+		   0xffff;
+
+	return !!(*p_pasid);
+}
+
 static int init_interrupts_v11(struct amdgpu_device *adev, uint32_t pipe_id,
 				uint32_t inst)
 {
@@ -806,6 +818,81 @@ static uint32_t kgd_gfx_v11_hqd_sdma_get_doorbell(struct amdgpu_device *adev,
 	return 0;
 }
 
+static uint32_t kgd_gfx_v11_trigger_pc_sample_trap(struct amdgpu_device *adev,
+					uint32_t vmid,
+					uint32_t *target_simd,
+					uint32_t *target_wave_slot,
+					uint32_t inst)
+{
+	uint32_t value = 0;
+	uint32_t status;
+	int num_se = adev->gfx.config.max_shader_engines;
+	int num_sh = adev->gfx.config.max_sh_per_se;
+	int num_wgp = adev->gfx.config.max_cu_per_sh / 2;
+	uint32_t total_simds = num_wgp * 4;
+
+	/* Check if previous trap is still pending */
+	status = RREG32_SOC15(GC, GET_INST(GC, inst),
+			      regSQ_DEBUG_HOST_TRAP_STATUS);
+	if (status & SQ_DEBUG_HOST_TRAP_STATUS__PENDING_COUNT_MASK)
+		return 0;
+
+	/* SQ_IND_CMD_CMD_TRAP=0x5, SQ_IND_CMD_MODE_BROADCAST=0x1 */
+	value = REG_SET_FIELD(value, SQ_CMD, CMD, 0x5);
+	value = REG_SET_FIELD(value, SQ_CMD, MODE, 0x1);
+	value = REG_SET_FIELD(value, SQ_CMD, CHECK_VMID, 1);
+	value = REG_SET_FIELD(value, SQ_CMD, VM_ID, vmid);
+	value = REG_SET_FIELD(value, SQ_CMD, WAVE_ID, *target_wave_slot);
+	value = REG_SET_FIELD(value, SQ_CMD, DATA, 0x4); /* TrapID 4 = HOST_TRAP */
+
+	/* GFX11: SIMD is selected via GRBM_GFX_INDEX INSTANCE */
+	mutex_lock(&adev->grbm_idx_mutex);
+	amdgpu_gfx_select_se_sh(adev, 0xFFFFFFFF, 0xFFFFFFFF,
+				 *target_simd, inst);
+	WREG32_SOC15(GC, GET_INST(GC, inst), regSQ_CMD, value);
+	amdgpu_gfx_select_se_sh(adev, 0xFFFFFFFF, 0xFFFFFFFF,
+				 0xFFFFFFFF, inst);
+	mutex_unlock(&adev->grbm_idx_mutex);
+
+	/* Round-robin: advance wave_slot, then simd */
+	(*target_wave_slot)++;
+	*target_wave_slot %= 16; /* max_waves_per_simd */
+	if (!(*target_wave_slot)) {
+		(*target_simd)++;
+		*target_simd %= total_simds;
+	}
+
+	return 0;
+}
+
+#define regSQ_PERF_SNAPSHOT_CTRL 0x10bb
+
+static uint32_t kgd_gfx_v11_setup_stoch_sampling(struct amdgpu_device *adev,
+			uint32_t compute_vmid_bitmap,
+			bool enable,
+			uint32_t type,
+			uint64_t intval,
+			uint32_t inst)
+{
+	uint32_t value = 0;
+	uint32_t readback = 0;
+	/* TIMER_ON_OFF [0], VMID_MASK [16:1], COUNT_SEL [17], COUNT_INTERVAL [21:18] */
+	value |= (enable ? 1 : 0);
+	value |= (compute_vmid_bitmap << 1);
+	value |= ((type - 1) << 17);
+	value |= ((ffs(intval >> 9)) << 18);
+
+	mutex_lock(&adev->grbm_idx_mutex);
+	amdgpu_gfx_select_se_sh(adev, 0xFFFFFFFF, 0xFFFFFFFF,
+				 0xFFFFFFFF, inst);
+	WREG32_SOC15(GC, GET_INST(GC, inst), regSQ_PERF_SNAPSHOT_CTRL, value);
+	amdgpu_gfx_select_se_sh(adev, 0xFFFFFFFF, 0xFFFFFFFF,
+				 0xFFFFFFFF, inst);
+	mutex_unlock(&adev->grbm_idx_mutex);
+
+	return 0;
+}
+
 const struct kfd2kgd_calls gfx_v11_kfd2kgd = {
 	.program_sh_mem_settings = program_sh_mem_settings_v11,
 	.set_pasid_vmid_mapping = set_pasid_vmid_mapping_v11,
@@ -820,7 +907,7 @@ const struct kfd2kgd_calls gfx_v11_kfd2kgd = {
 	.hqd_destroy = hqd_destroy_v11,
 	.hqd_sdma_destroy = hqd_sdma_destroy_v11,
 	.wave_control_execute = wave_control_execute_v11,
-	.get_atc_vmid_pasid_mapping_info = NULL,
+	.get_atc_vmid_pasid_mapping_info = get_atc_vmid_pasid_mapping_info_v11,
 	.set_vm_context_page_table_base = set_vm_context_page_table_base_v11,
 	.enable_debug_trap = kgd_gfx_v11_enable_debug_trap,
 	.disable_debug_trap = kgd_gfx_v11_disable_debug_trap,
@@ -831,5 +918,7 @@ const struct kfd2kgd_calls gfx_v11_kfd2kgd = {
 	.clear_address_watch = kgd_gfx_v11_clear_address_watch,
 	.hqd_get_pq_addr = kgd_gfx_v11_hqd_get_pq_addr,
 	.hqd_reset = kgd_gfx_v11_hqd_reset,
-	.hqd_sdma_get_doorbell = kgd_gfx_v11_hqd_sdma_get_doorbell
+	.hqd_sdma_get_doorbell = kgd_gfx_v11_hqd_sdma_get_doorbell,
+	.trigger_pc_sample_trap = kgd_gfx_v11_trigger_pc_sample_trap,
+	.setup_stoch_sampling = kgd_gfx_v11_setup_stoch_sampling
 };

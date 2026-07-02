@@ -257,6 +257,40 @@ L_NOT_HALTED:
 	// Let second-level handle non-SAVECTX exception or trap.
 	// Any concurrent SAVECTX will be handled upon re-entry once halted.
 
+	/* Check PERF_SNAPSHOT */
+	s_bitcmp1_b32	s_save_trapsts, 19
+	s_cbranch_scc0	L_CHECK_NON_MASKABLE_EXCP
+
+	/* If SAVECTX also set, prioritize save -- clear PERF_SNAPSHOT */
+	s_bitcmp1_b32	s_save_trapsts, S_TRAPSTS_SAVE_CONTEXT_SHIFT
+	s_cbranch_scc1	L_CLEAR_PERF_SNAPSHOT
+
+	/* To check the driver mask in TMA flags, we need TMA */
+#if HAVE_SENDMSG_RTN
+	s_sendmsg_rtn_b64	[ttmp14, ttmp15], sendmsg(MSG_RTN_GET_TMA)
+	S_WAITCNT_0
+#else
+	s_getreg_b32	ttmp14, hwreg(HW_REG_SHADER_TMA_LO)
+	s_getreg_b32	ttmp15, hwreg(HW_REG_SHADER_TMA_HI)
+#endif
+	s_lshl_b64	[ttmp14, ttmp15], [ttmp14, ttmp15], 0x8
+	s_bitcmp1_b32	ttmp15, 0xF
+	s_cbranch_scc0	L_NO_SIGN_EXTEND_TMA_PERF
+	s_or_b32	ttmp15, ttmp15, 0xFFFF0000
+L_NO_SIGN_EXTEND_TMA_PERF:
+
+	s_load_dword	ttmp2, [ttmp14, ttmp15], 0x10 S_COHERENCE
+	S_WAITCNT_0
+	s_bitcmp1_b32	ttmp2, 2
+	s_cbranch_scc0	L_CLEAR_PERF_SNAPSHOT
+
+	s_branch	L_FETCH_2ND_TRAP
+
+L_CLEAR_PERF_SNAPSHOT:
+	s_setreg_imm32_b32 hwreg(S_TRAPSTS_HWREG, 19, 1), 0x0
+	s_andn2_b32	s_save_trapsts, s_save_trapsts, 0x80000
+
+L_CHECK_NON_MASKABLE_EXCP:
 	// Check non-maskable exceptions. memory_violation, illegal_instruction
 	// and xnack_error exceptions always cause the wave to enter the trap
 	// handler.
