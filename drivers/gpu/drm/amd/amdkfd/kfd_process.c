@@ -21,6 +21,7 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <linux/bitops.h>
 #include <linux/mutex.h>
 #include <linux/log2.h>
 #include <linux/sched.h>
@@ -44,6 +45,7 @@ struct mm_struct;
 #include "kfd_svm.h"
 #include "kfd_smi_events.h"
 #include "kfd_debug.h"
+#include "kfd_pc_sampling.h"
 
 /*
  * List of struct kfd_process (field kfd_process).
@@ -1149,6 +1151,7 @@ static void kfd_process_destroy_pdds(struct kfd_process *p)
 
 		pr_debug("Releasing pdd (topology id %d, for pid %d)\n",
 			pdd->dev->id, p->lead_thread->pid);
+		kfd_pc_sample_release(pdd);
 		kfd_process_device_destroy_cwsr_dgpu(pdd);
 		kfd_process_device_destroy_ib_mem(pdd);
 
@@ -1618,9 +1621,25 @@ void kfd_process_set_trap_debug_flag(struct qcm_process_device *qpd,
 				     bool enabled)
 {
 	if (qpd->cwsr_kaddr) {
-		uint64_t *tma =
-			(uint64_t *)(qpd->cwsr_kaddr + KFD_CWSR_TMA_OFFSET);
-		tma[2] = enabled;
+		volatile unsigned long *tma =
+			(volatile unsigned long *)(qpd->cwsr_kaddr + KFD_CWSR_TMA_OFFSET);
+		if (enabled)
+			set_bit(KFD_TRAP_TYPE_DEBUG, &tma[2]);
+		else
+			clear_bit(KFD_TRAP_TYPE_DEBUG, &tma[2]);
+	}
+}
+
+void kfd_process_set_trap_pc_sampling_flag(struct qcm_process_device *qpd,
+			     enum kfd_ioctl_pc_sample_method method, bool enabled)
+{
+	if (qpd->cwsr_kaddr) {
+		volatile unsigned long *tma =
+			(volatile unsigned long *)(qpd->cwsr_kaddr + KFD_CWSR_TMA_OFFSET);
+		if (enabled)
+			set_bit(method, &tma[2]);
+		else
+			clear_bit(method, &tma[2]);
 	}
 }
 
