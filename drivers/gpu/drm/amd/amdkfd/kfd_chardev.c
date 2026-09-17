@@ -2814,26 +2814,9 @@ static int runtime_enable(struct kfd_process *p, uint64_t r_debug,
 
 	p->runtime_info.runtime_state = DEBUG_RUNTIME_STATE_ENABLED;
 	p->runtime_info.r_debug = r_debug;
-	p->runtime_info.ttmp_setup = enable_ttmp_setup;
 
-	if (p->runtime_info.ttmp_setup) {
-		for (i = 0; i < p->n_pdds; i++) {
-			struct kfd_process_device *pdd = p->pdds[i];
-
-			if (!kfd_dbg_is_rlc_restore_supported(pdd->dev)) {
-				amdgpu_gfx_off_ctrl(pdd->dev->adev, false);
-				pdd->dev->kfd2kgd->enable_debug_trap(
-						pdd->dev->adev,
-						true,
-						pdd->dev->vm_info.last_vmid_kfd);
-			} else if (kfd_dbg_is_per_vmid_supported(pdd->dev)) {
-				pdd->spi_dbg_override = pdd->dev->kfd2kgd->enable_debug_trap(
-						pdd->dev->adev,
-						false,
-						0);
-			}
-		}
-	}
+	if (enable_ttmp_setup)
+		kfd_dbg_enable_ttmp_setup(p);
 
 retry:
 	if (p->debug_trap_enabled) {
