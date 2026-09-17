@@ -158,12 +158,16 @@ static int isp_genpd_remove_device(struct device *dev, void *data)
 {
 	struct generic_pm_domain *gpd = data;
 	struct platform_device *pdev = container_of(dev, struct platform_device, dev);
-	struct amdgpu_isp *isp = container_of(gpd, struct amdgpu_isp, ispgpd);
-	struct amdgpu_device *adev = isp->adev;
+	struct amdgpu_isp *isp;
+	struct amdgpu_device *adev;
 	int ret;
 
-	if (!pdev)
+	/* The caller must pass the ISP genpd, mirroring isp_genpd_add_device(). */
+	if (!gpd || !pdev)
 		return -EINVAL;
+
+	isp = container_of(gpd, struct amdgpu_isp, ispgpd);
+	adev = isp->adev;
 
 	if (!dev->type || !dev->type->name) {
 		drm_dbg(&adev->ddev, "Invalid device type to remove\n");
@@ -390,7 +394,7 @@ failure:
 
 static int isp_v4_1_1_hw_fini(struct amdgpu_isp *isp)
 {
-	device_for_each_child(isp->parent, NULL,
+	device_for_each_child(isp->parent, &isp->ispgpd,
 			      isp_genpd_remove_device);
 
 	mfd_remove_devices(isp->parent);
