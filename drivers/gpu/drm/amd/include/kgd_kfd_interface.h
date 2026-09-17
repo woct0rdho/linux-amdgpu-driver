@@ -31,7 +31,61 @@
 #include <linux/types.h>
 #include <linux/bitmap.h>
 #include <linux/dma-fence.h>
+#include <uapi/linux/kfd_ioctl.h>
 #include "amdgpu_irq.h"
+
+/*
+ * PC sampling types, duplicated from include/uapi/linux/kfd_ioctl.h for
+ * out-of-tree DKMS builds where the installed kernel headers lack them.
+ */
+#ifndef KFD_IOCTL_PCS_FLAG_POWER_OF_2
+
+enum kfd_ioctl_pc_sample_op {
+	KFD_IOCTL_PCS_OP_QUERY_CAPABILITIES,
+	KFD_IOCTL_PCS_OP_CREATE,
+	KFD_IOCTL_PCS_OP_DESTROY,
+	KFD_IOCTL_PCS_OP_START,
+	KFD_IOCTL_PCS_OP_STOP,
+};
+
+#define KFD_IOCTL_PCS_FLAG_POWER_OF_2 0x00000001
+
+enum kfd_ioctl_pc_sample_method {
+	KFD_IOCTL_PCS_METHOD_HOSTTRAP = 1,
+	KFD_IOCTL_PCS_METHOD_STOCHASTIC,
+};
+
+enum kfd_ioctl_pc_sample_type {
+	KFD_IOCTL_PCS_TYPE_TIME_US,
+	KFD_IOCTL_PCS_TYPE_CLOCK_CYCLES,
+	KFD_IOCTL_PCS_TYPE_INSTRUCTIONS
+};
+
+struct kfd_pc_sample_info {
+	__u64 interval;
+	__u64 interval_min;
+	__u64 interval_max;
+	__u64 flags;
+	__u32 method;
+	__u32 type;
+};
+
+#define KFD_IOCTL_PCS_QUERY_TYPE_FULL (1 << 0)
+
+struct kfd_ioctl_pc_sample_args {
+	__u64 sample_info_ptr;
+	__u32 num_sample_info;
+	__u32 op;
+	__u32 gpu_id;
+	__u32 trace_id;
+	__u32 flags;
+	__u32 version;
+};
+
+#define AMDKFD_IOC_PC_SAMPLE		\
+		AMDKFD_IOWR(0x85, struct kfd_ioctl_pc_sample_args)
+
+#endif /* KFD_IOCTL_PCS_FLAG_POWER_OF_2 */
 #include "amdgpu_gfx.h"
 
 struct pci_dev;
@@ -333,6 +387,18 @@ struct kfd2kgd_calls {
 			      uint32_t inst, unsigned int utimeout);
 	uint32_t (*hqd_sdma_get_doorbell)(struct amdgpu_device *adev,
 					  int engine, int queue);
+	uint32_t (*trigger_pc_sample_trap)(struct amdgpu_device *adev,
+			uint32_t vmid,
+			uint32_t *target_simd,
+			uint32_t *target_wave_slot,
+			enum kfd_ioctl_pc_sample_method method,
+			uint32_t inst);
+	uint32_t (*setup_stoch_sampling)(struct amdgpu_device *adev,
+			uint32_t compute_vmid_bitmap,
+			bool enable,
+			enum kfd_ioctl_pc_sample_type type,
+			uint64_t intval,
+			uint32_t inst);
 };
 
 #endif	/* KGD_KFD_INTERFACE_H_INCLUDED */
