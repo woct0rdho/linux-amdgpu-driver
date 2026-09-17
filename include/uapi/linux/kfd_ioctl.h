@@ -1681,7 +1681,55 @@ struct kfd_ioctl_dbg_trap_args {
 #define AMDKFD_IOC_CREATE_PROCESS		\
 		AMDKFD_IO(0x27)
 
+enum kfd_ioctl_pc_sample_op {
+	KFD_IOCTL_PCS_OP_QUERY_CAPABILITIES,
+	KFD_IOCTL_PCS_OP_CREATE,
+	KFD_IOCTL_PCS_OP_DESTROY,
+	KFD_IOCTL_PCS_OP_START,
+	KFD_IOCTL_PCS_OP_STOP,
+};
+
+#define KFD_IOCTL_PCS_FLAG_POWER_OF_2 0x00000001
+
+enum kfd_ioctl_pc_sample_method {
+	KFD_IOCTL_PCS_METHOD_HOSTTRAP = 1,
+	KFD_IOCTL_PCS_METHOD_STOCHASTIC,
+};
+
+enum kfd_ioctl_pc_sample_type {
+	KFD_IOCTL_PCS_TYPE_TIME_US,
+	KFD_IOCTL_PCS_TYPE_CLOCK_CYCLES,
+	KFD_IOCTL_PCS_TYPE_INSTRUCTIONS
+};
+
+struct kfd_pc_sample_info {
+	__u64 interval;
+	__u64 interval_min;
+	__u64 interval_max;
+	__u64 flags;
+	__u32 method;
+	__u32 type;
+};
+
+#define KFD_IOCTL_PCS_QUERY_TYPE_FULL (1 << 0)
+
+struct kfd_ioctl_pc_sample_args {
+	__u64 sample_info_ptr;
+	__u32 num_sample_info;
+	__u32 op;
+	__u32 gpu_id;
+	__u32 trace_id;
+	__u32 flags;
+	__u32 version;
+};
+
+#define AMDKFD_IOC_PC_SAMPLE		\
+		AMDKFD_IOWR(0x85, struct kfd_ioctl_pc_sample_args)
+
 #define AMDKFD_COMMAND_START		0x01
 #define AMDKFD_COMMAND_END		0x28
+
+#define AMDKFD_COMMAND_START_2		0x80
+#define AMDKFD_COMMAND_END_2		0x88
 
 #endif

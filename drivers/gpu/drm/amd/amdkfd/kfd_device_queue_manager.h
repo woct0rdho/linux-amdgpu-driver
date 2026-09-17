@@ -370,5 +370,8 @@ static inline void update_dqm_wait_times(struct device_queue_manager *dqm)
 					ffs(dqm->dev->xcc_mask) - 1);
 }
 
+void remap_queue(struct device_queue_manager *dqm,
+		 enum kfd_unmap_queues_filter filter,
+		 uint32_t filter_param);
 
 #endif /* KFD_DEVICE_QUEUE_MANAGER_H_ */

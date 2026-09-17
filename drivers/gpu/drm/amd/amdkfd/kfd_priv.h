@@ -265,6 +265,38 @@ struct kfd_vmid_info {
 
 struct kfd_dev;
 
+/* Fallback for kernels whose uapi header predates the second ioctl range */
+#ifndef AMDKFD_COMMAND_START_2
+#define AMDKFD_COMMAND_START_2	0x80
+#define AMDKFD_COMMAND_END_2	0x88
+#endif
+
+struct kfd_dev_pc_sampling_data {
+	uint32_t use_count;
+	uint32_t active_count;
+	struct kfd_pc_sample_info pc_sample_info;
+};
+
+struct kfd_dev_pcs_hosttrap {
+	struct kfd_dev_pc_sampling_data base;
+	uint32_t owner_pasid;       /* PASID of the process that is sampling */
+	uint32_t target_simd;       /* target simd for trap */
+	uint32_t target_wave_slot;  /* target wave slot for trap */
+	uint32_t target_vmid;       /* VMID of the process that is sampling */
+	struct task_struct *pc_sample_thread;
+};
+
+struct kfd_dev_stochastic {
+	struct kfd_dev_pc_sampling_data base;
+};
+
+struct kfd_dev_pc_sampling {
+	struct mutex mutex;
+	struct idr sampling_idr;
+	struct kfd_dev_pcs_hosttrap hosttrap_entry;
+	struct kfd_dev_stochastic stoch_entry;
+};
+
 struct kfd_node {
 	unsigned int node_id;
 	struct amdgpu_device *adev;     /* Duplicated here along with keeping
@@ -320,6 +352,9 @@ struct kfd_node {
 	/* Track per device allocated watch points */
 	uint32_t alloc_watch_ids;
 	spinlock_t watch_points_lock;
+
+	/* Per-device PC sampling data */
+	struct kfd_dev_pc_sampling pcs_data;
 };
 
 struct kfd_dev {
@@ -751,6 +786,12 @@ enum kfd_pdd_bound {
  */
 #define SDMA_ACTIVITY_DIVISOR  100
 
+struct pc_sampling_entry {
+	bool enabled;
+	enum kfd_ioctl_pc_sample_method method;
+	struct kfd_process_device *pdd;
+};
+
 /* Data that is per-process-per device. */
 struct kfd_process_device {
 	/* The device that owns this data. */
@@ -1026,6 +1067,7 @@ struct kfd_process {
 	/* The primary kfd_process allocating IDs for its secondary kfd_process, 0 for primary kfd_process */
 	struct ida id_table;
 
+	uint32_t pc_sampling_ref;
 };
 
 #define KFD_PROCESS_TABLE_SIZE 8 /* bits: 256 entries */
@@ -1216,6 +1258,9 @@ void kfd_process_set_trap_handler(struct qcm_process_device *qpd,
 				  uint64_t tba_addr,
 				  uint64_t tma_addr);
 void kfd_process_set_trap_debug_flag(struct qcm_process_device *qpd,
+				     bool enabled);
+void kfd_process_set_trap_pc_sampling_flag(struct qcm_process_device *qpd,
+				     enum kfd_ioctl_pc_sample_method method,
 				     bool enabled);
 
 /* CWSR initialization */
