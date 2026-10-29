@@ -77,7 +77,7 @@ amdgpu_eviction_fence_replace_fence(struct amdgpu_eviction_fence_mgr *evf_mgr,
 	spin_unlock(&evf_mgr->ev_fence_lock);
 
 	/* Attach the new fence */
-	drm_exec_for_each_locked_object(exec, index, obj) {
+	for (index = 0; (obj = drm_exec_obj(exec, index)); ++index) {
 		struct amdgpu_bo *bo = gem_to_amdgpu_bo(obj);
 
 		if (!bo)
